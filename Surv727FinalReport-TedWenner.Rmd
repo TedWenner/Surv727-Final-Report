@@ -1,0 +1,444 @@
+---
+title: "Surv 727 Final Project- Beats and Baseball"
+author: "Ted Wenner"
+date: "12/08/2025"
+output:
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(rvest)
+library(stringr)
+library(purrr)
+library(readr)
+
+```
+
+#Github Repository Link
+```{}
+https://github.com/TedWenner/Surv727-Final-Report
+```
+
+```{r, include = FALSE}
+
+mlb_teams <- c(
+  "https://www.mlb.com/yankees/ballpark/music",
+  "https://www.mlb.com/dodgers/ballpark/music",
+  "https://www.mlb.com/astros/ballpark/music",
+  "https://www.mlb.com/orioles/ballpark/music",
+  "https://www.mlb.com/redsox/ballpark/music",
+  "https://www.mlb.com/cubs/ballpark/music",
+  "https://www.mlb.com/giants/ballpark/music",
+  "https://www.mlb.com/cardinals/ballpark/music",
+  "https://www.mlb.com/mariners/ballpark/music",
+  "https://www.mlb.com/braves/ballpark/music",
+  "https://www.mlb.com/angels/ballpark/music",
+  "https://www.mlb.com/phillies/ballpark/music",
+  "https://www.mlb.com/tigers/ballpark/music",
+  "https://www.mlb.com/bluejays/ballpark/music",
+  "https://www.mlb.com/rangers/ballpark/music",
+  "https://www.mlb.com/mets/ballpark/music",
+  "https://www.mlb.com/whitesox/ballpark/music",
+  "https://www.mlb.com/padres/ballpark/music",
+  "https://www.mlb.com/dbacks/ballpark/music",
+  "https://www.mlb.com/royals/ballpark/music",
+  "https://www.mlb.com/rockies/ballpark/music",
+  "https://www.mlb.com/pirates/ballpark/music",
+  "https://www.mlb.com/nationals/ballpark/music",
+  "https://www.mlb.com/rays/ballpark/music",
+  "https://www.mlb.com/guardians/ballpark/music",
+  "https://www.mlb.com/marlins/ballpark/music",
+  "https://www.mlb.com/athletics/ballpark/music",
+  "https://www.mlb.com/twins/ballpark/music",
+  "https://www.mlb.com/brewers/ballpark/music",
+  "https://www.mlb.com/braves/ballpark/music")
+
+scrape_mlb_team_music <- function(team_url) {
+  page <- read_html(team_url)
+  song_rows <- page |> html_elements("[data-testid^='player-walkup-music-song-content-songname']")
+  songs <- song_rows |> html_text(trim = TRUE)
+  artists <- page |> html_elements(".player-walkup-music__song--content--artistname") |> 
+    html_text(trim = TRUE)
+  albums <- page |> html_elements(".player-walkup-music__album--name") |>
+    html_text(trim = TRUE)
+  first_names <- page |> html_elements("[data-testid='spot-tag__super-name']") |>
+    html_text(trim = TRUE)
+  last_names <- page |> html_elements("[data-testid='spot-tag__name']") |>
+    html_text(trim = TRUE)
+  players <- paste(first_names, last_names)
+  tibble(
+    player = players[1:length(songs)],
+    song = songs,
+    artist = artists,
+    album = albums
+  )
+}
+
+all_teams_music <- map_dfr(mlb_teams, function(url) {
+  cat("Scraping:", url, "\n")  
+  tryCatch(
+    {
+      scrape_mlb_team_music(url)
+    },
+    error = function(e) {
+      cat("Failed:", url, "\n")
+      tibble(player=character(), song=character(), artist=character(), album=character())
+    }
+  )
+})
+
+```
+
+```{r, include=FALSE}
+Songs<- read.csv("~/Downloads/SpotifyFeatures.csv")
+
+walkup_music <- all_teams_music |>
+  mutate(
+    song_clean = tolower(trimws(song)),
+    artist_clean = tolower(trimws(artist))
+  )
+
+Music_Features <- Songs |>
+  mutate(
+    song_clean = tolower(trimws(track_name)),
+    artist_clean = tolower(trimws(artist_name))
+  )
+
+spotify_features_clean <- Music_Features |>
+  group_by(song_clean, artist_clean) |>
+  slice(1) |>    
+  ungroup()
+
+walkup_with_features <- walkup_music |>
+  left_join(spotify_features_clean, by = c("song_clean", "artist_clean"))
+
+# Batting Statistics 
+
+BattingStats<- read_csv("~/Downloads/BattingStats.csv")
+
+
+BattingStats_clean <- BattingStats |>
+  rename(raw_name = `last_name, first_name`) |>
+  mutate(
+    last  = str_trim(str_split_fixed(raw_name, ",", 2)[,1]),
+    first = str_trim(str_split_fixed(raw_name, ",", 2)[,2]),
+    name  = str_squish(paste(first, last))
+  )
+
+# --- 2) Normalization function ---
+normalize_name <- function(x) {
+  x |>
+    as.character() |>
+    stringi::stri_trans_general("Latin-ASCII") |>
+    str_replace_all("[\\.,]", "") |>
+    str_to_lower() |>
+    str_replace_all("\\s+", " ") |>
+    str_trim()
+}
+
+
+BattingStats_clean <- BattingStats_clean |>
+  mutate(name_key = normalize_name(name))
+
+walkup_with_features_clean <- walkup_with_features |>
+  mutate(name_key = normalize_name(player))
+
+final_dataset <- walkup_with_features_clean |>
+  inner_join(BattingStats_clean, by = "name_key", suffix = c(".walkup", ".batting")) |>
+  select(-name_key)
+
+final_dataset
+
+```
+
+# Introduction
+As a lifelong baseball fan, I have always been interested in different intricacies of the game. I love the little things and quirks that the sport has that no others do. As a former swimmer, I always felt I swam my best when I was blasting music through my headphones before a race, and I wondered if other sports have the same impact. I am curious if baseball players have that kind of connection, and if there is any correlation between their Walk-Up song and their offensive production. 
+
+My main goal with this project was to see if a player’s walk-up music had any impact on how they did at the plate. I didn’t want to just see if their music made them do well, but if a certain type of music benefited different types of hitters. For example, does slower music help contact hitters do better? Does faster or louder music impact if a player hits for more power? 
+
+# Methodolgy
+The methodology for this research adapted and changed a lot along the way as my original plan ran into licensing and paywall issues. While my final output was less detailed than I originally intended, it still provides a small snapshot into this fun project. 
+
+Players and Songs- In order to get the sample of MLB players and their walk-up songs, I scraped MLB.com’s ballpark music section. For example, https://www.mlb.com/nationals/ballpark/music . This provided a dataset of players from most teams and their up-to-date walk-up music. 
+
+Music Features- Once I got the sample of players, I downloaded a Spotify Song Features dataset. This had over 230,000 available songs and their features such as genre, tempo, valence, loudness, etc. With this dataset, I joined it with my player database to match by walk-up song.
+
+Statistics- Finally, to get the 2025 batting statistics, I downloaded a dataset with the specific stats I wanted off of MLB’s Baseball Savant website. I originally wanted to scrape fangraphs to adjust for home batting statistics only, but fangraphs does not allow you to scrape their website.
+
+# Analysis
+
+Figure 1 shows a player's average hit type per walk-up song genre. I wanted to see if the overarching genre had any trends. In this plot you can see that players with a country song as their walk-up song hit more singles and doubles than players with a different genre. Hip-Hop was the key genre for hitting triples, and Rock was the preferred genre of Home-Run hitters. 
+
+Figure 1: Average Hit Type by Walk-Up Song Genre
+```{r, echo=FALSE}
+genre_hit_long <- final_dataset |>
+  filter(!is.na(genre)) |>
+  group_by(genre) |>
+  summarise(
+    avg_single  = mean(single, na.rm = TRUE),
+    avg_double  = mean(double, na.rm = TRUE),
+    avg_triple  = mean(triple, na.rm = TRUE),
+    avg_homerun = mean(home_run, na.rm = TRUE),
+    n = n()
+  ) |>
+  filter(n >= 5) |>
+  pivot_longer(
+    cols = starts_with("avg_"),
+    names_to = "hit_type",
+    values_to = "avg_hits"
+  ) |>
+  mutate(
+    hit_type = recode(hit_type,
+                      avg_single  = "Single",
+                      avg_double  = "Double",
+                      avg_triple  = "Triple",
+                      avg_homerun = "Home Run"
+    )
+  )
+
+genre_order <- genre_hit_long |>
+  group_by(genre) |>
+  summarise(total_avg = sum(avg_hits)) |>
+  arrange(desc(total_avg))
+
+genre_hit_long$genre <- factor(
+  genre_hit_long$genre,
+  levels = genre_order$genre
+)
+
+Genre_Plot<- ggplot(genre_hit_long, aes(x = genre, y = avg_hits, fill = hit_type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Average Hit Type per Player by Walk-Up Song Genre",
+    subtitle = "Singles, Doubles, Triples, and Home Runs",
+    x = "Walk-Up Song Genre",
+    y = "Average Hits per Player",
+    fill = "Hit Type"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+
+Genre_Plot
+```
+
+For Figure 2, we have a scatter plot showing average hit rates of different types of hits, along with how loud the player’s walk-up song is in decibels. Similar to the last plot, singles are easier to get than the other types of hits, that is why you will see them have a significantly higher rate than the others. As you can see, there is a larger portion of the hits on the right side of the graph around the -10 to -5 db range. While this may seem prominent, most popular songs are recorded in this range. 
+
+Figure 2: Hit Rates By Walk-Up Song Loudness
+```{r, echo=FALSE}
+final_dataset <- final_dataset |>
+  mutate(
+    single_rate  = single / pa,
+    double_rate  = double / pa,
+    triple_rate  = triple / pa,
+    homerun_rate = home_run / pa
+  )
+
+hit_rate_long <- final_dataset |>
+  filter(!is.na(loudness)) |>
+  select(loudness, single_rate, double_rate, triple_rate, homerun_rate) |>
+  pivot_longer(
+    cols = ends_with("_rate"),
+    names_to = "hit_type",
+    values_to = "hit_rate"
+  ) |>
+  mutate(
+    hit_type = recode(hit_type,
+                      single_rate  = "Single",
+                      double_rate  = "Double",
+                      triple_rate  = "Triple",
+                      homerun_rate = "Home Run"
+    )
+  )
+
+hitrate_loud<- ggplot(hit_rate_long, aes(x = loudness, y = hit_rate, color = hit_type)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Hit Rates by Walk-Up Song Loudness",
+    subtitle = "Separate trends for each hit type",
+    x = "Loudness (Decibels)",
+    y = "Hit Rate per Plate Appearance",
+    color = "Hit Type"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold")
+  )
+
+hitrate_loud
+```
+
+Now, I wanted to see how a different type of hitter benefited from different speeds and moods of music. In Figure 3 we can see batting average, on-base percentage, and slugging percentage based on the tempo (beats per minute) of a player’s walk-up song. If this was statistically significant, it would show that slower songs are better for hitters that get on base more (on-base percentage) and that hit for more power (slugging percentage). While faster songs are better for hitters that rely on getting more contact (batting average). 
+
+Figure 3: Batting Metrics by Walk-Up Song Tempo
+```{r, echo=FALSE}
+final_dataset <- final_dataset |>
+  mutate(
+    tempo_bin = case_when(
+      tempo < 90  ~ "Slow (<90 BPM)",
+      tempo < 120 ~ "Medium (90–119 BPM)",
+      TRUE        ~ "Fast (120+ BPM)"
+    )
+  )
+
+tempo_stats <- final_dataset |>
+  filter(!is.na(tempo_bin), !is.na(batting_avg), !is.na(on_base_percent), !is.na(slg_percent)) |>
+  group_by(tempo_bin) |>
+  summarise(
+    Batting_Avg = mean(batting_avg, na.rm = TRUE),
+    OBP         = mean(on_base_percent, na.rm = TRUE),
+    SLG         = mean(slg_percent, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  pivot_longer(
+    cols = c(Batting_Avg, OBP, SLG),
+    names_to = "stat",
+    values_to = "avg_value"
+  )
+
+tempoplot<- ggplot(tempo_stats, aes(x = tempo_bin, y = avg_value, fill = stat)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  geom_text(aes(label = round(avg_value, 3)), 
+            position = position_dodge(width = 0.8), vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("Batting_Avg" = "purple", 
+                               "OBP" = "orange", 
+                               "SLG" = "navy")) +
+  labs(
+    title = "Batting Metrics by Walk-Up Song Tempo",
+    x = "Tempo Category",
+    y = "Average Rate",
+    fill = "Statistic"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 15, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+
+tempoplot
+```
+
+Figure 4 shows how the mood (valence) of a player’s walk-up song has an impact on what type of hitter they are. If this graph were statistically significant, it would show that sadder songs are better for every type of hitter. On average, players with sadder walk-up songs had a higher batting average, on-base percentage, and slugging percentage. Players with happy walk-up songs also performed well, similar to Figure 3, the neutral bin performed the worst.
+
+Figure 4: Batting Metrics by Walk-Up Song Mood
+```{r, echo=FALSE}
+final_dataset <- final_dataset |>
+  mutate(
+    valence_bin = case_when(
+      valence < 0.33 ~ "Sad",
+      valence < 0.66 ~ "Neutral",
+      TRUE           ~ "Happy"
+    )
+  )
+
+valence_stats <- final_dataset |>
+  filter(!is.na(valence_bin), !is.na(batting_avg), !is.na(on_base_percent), !is.na(slg_percent)) |>
+  group_by(valence_bin) |>
+  summarise(
+    Batting_Avg = mean(batting_avg, na.rm = TRUE),
+    OBP         = mean(on_base_percent, na.rm = TRUE),
+    SLG         = mean(slg_percent, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  pivot_longer(
+    cols = c(Batting_Avg, OBP, SLG),
+    names_to = "stat",
+    values_to = "avg_value"
+  )
+
+valenceplot<- ggplot(valence_stats, aes(x = valence_bin, y = avg_value, fill = stat)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  geom_text(aes(label = round(avg_value, 3)), 
+            position = position_dodge(width = 0.8), vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("Batting_Avg" = "darkred", 
+                               "OBP" = "darkblue", 
+                               "SLG" = "darkgreen")) +
+  labs(
+    title = "Batting Metrics by Walk-Up Song Mood",
+    x = "Song Mood",
+    y = "Average Rate",
+    fill = "Statistic"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 15, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+
+valenceplot
+```
+
+# Conclusion 
+Lastly, Figure 5 shows a correlation heat map between the song features and batting metrics. As stated earlier there is no correlation or statistical significance between batting and features of a walk-up song. 
+
+Figure 5: Correlation Heatmap
+```{r, echo=FALSE}
+cor_data <- final_dataset %>%
+  select(
+    batting_avg, on_base_percent, slg_percent, on_base_plus_slg,
+    tempo, loudness, valence
+  ) %>%
+  filter(complete.cases(.))
+
+cor_matrix <- round(cor(cor_data), 2) 
+
+cor_long <- melt(cor_matrix)
+
+correlation_map<- ggplot(cor_long, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "red", mid = "white", high = "green", midpoint = 0,
+    limit = c(-1, 1), space = "Lab", name = "Correlation"
+  ) +
+  geom_text(aes(label = value), color = "black", size = 3) +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Correlation Heatmap: Walk-Up Song Features vs Batting Metrics",
+    x = "",
+    y = ""
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    axis.text.y = element_text(angle = 0),
+    plot.title = element_text(face = "bold")
+  )
+
+correlation_map
+
+```
+
+
+While there is no statistical significance, this project did show some trends in popularity of song features. While the genre, loudness, speed, or mood of the song did not necessarily impact a players ability to hit, this does show some trends in what types of songs are popular among hitters. Such as slower and sadder songs being more popular with better hitters in the dataset, which was surprising. In the end, walk-ip songs do not drive performance, but they do offer some insight on confidence and personality of today's hitters. 
+
+```{r, include=FALSE}
+# Here I also have some statistical tests to test for siginificance, if this is of interest. 
+# Genre
+anova_hit_genre <- aov(hit / pa ~ genre, data = final_dataset)
+summary(anova_hit_genre)
+
+#Hit rate, loudness
+lm_hit_loudness <- lm((hit / pa) ~ loudness, data = final_dataset)
+summary(lm_hit_loudness)
+
+# Tempo
+aov_bavg <- aov(batting_avg ~ tempo_bin, data = final_dataset)
+summary(aov_bavg)
+
+aov_obp <- aov(on_base_percent ~ tempo_bin, data = final_dataset)
+summary(aov_obp)
+
+aov_slg <- aov(slg_percent ~ tempo_bin, data = final_dataset)
+summary(aov_slg)
+
+#Valence
+aov_bavg_valence <- aov(batting_avg ~ valence_bin, data = final_dataset)
+summary(aov_bavg_valence)
+```
